@@ -1,0 +1,1650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DEFRAG</title>
+<style>
+  :root {
+    --void: #0a0e12;
+    --rail: #142028;
+    --conduit: #2a4d5c;
+    --process: #3dd6c4;
+    --gc: #e8643c;
+    --fragment: #d4c84a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: var(--void);
+    color: #6b8a96;
+    font-family: 'Courier New', monospace;
+    height: 100%;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+  }
+  #hud {
+    width: 100%;
+    max-width: 760px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0 4px;
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  #hud .title {
+    color: var(--process);
+    font-weight: bold;
+    letter-spacing: 6px;
+  }
+  #hud .stat { color: #6b8a96; }
+  #hud .stat b { color: var(--fragment); font-weight: normal; }
+  #stage {
+    position: relative;
+    border: 1px solid #1a2c36;
+    box-shadow: 0 0 60px rgba(61,214,196,0.04), inset 0 0 80px rgba(0,0,0,0.6);
+  }
+  canvas { display: block; image-rendering: pixelated; }
+  #msg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    background: rgba(10,14,18,0.0);
+    z-index: 10;
+    gap: 14px;
+    padding: 20px;
+    pointer-events: none;
+    transition: background 0.4s;
+  }
+  #msg.hidden { display: none; }
+  #msg.visible { pointer-events: all; background: rgba(10,14,18,0.88); }
+
+  /* title letterpress pop — shared base */
+  #msg h1 {
+    font-size: 32px;
+    letter-spacing: 10px;
+    font-weight: normal;
+    opacity: 1;
+    transform: scale(1);
+  }
+  #msg.anim-victory h1, #msg.anim-death h1 {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  #msg.anim-victory h1 {
+    color: var(--process);
+    animation: titlePopVictory 0.7s cubic-bezier(0.22,1.2,0.36,1) 0.15s forwards;
+  }
+  #msg.anim-death h1 {
+    color: var(--gc);
+    animation: titlePopDeath 0.6s cubic-bezier(0.22,1.2,0.36,1) 0.05s forwards;
+  }
+  @keyframes titlePopVictory {
+    0%   { opacity:0; transform: scale(0.3) translateY(12px); letter-spacing: 2px; }
+    60%  { opacity:1; transform: scale(1.12) translateY(-4px); letter-spacing: 12px; }
+    80%  { transform: scale(0.97) translateY(1px); letter-spacing: 9px; }
+    100% { opacity:1; transform: scale(1) translateY(0); letter-spacing: 10px; }
+  }
+  @keyframes titlePopDeath {
+    0%   { opacity:0; transform: scale(2.4) translateY(-8px); letter-spacing: 20px; filter: blur(8px); }
+    40%  { opacity:1; transform: scale(0.88) translateY(3px); letter-spacing: 6px; filter: blur(0); }
+    70%  { transform: scale(1.04); letter-spacing: 11px; }
+    100% { opacity:1; transform: scale(1); letter-spacing: 10px; }
+  }
+
+  /* body text fade */
+  #msg p {
+    font-size: 12px;
+    line-height: 1.9;
+    max-width: 380px;
+    letter-spacing: 1px;
+    opacity: 1;
+  }
+  #msg.anim-victory p, #msg.anim-death p {
+    opacity: 0;
+    animation: fadeSlideUp 0.5s ease 0.7s forwards;
+  }
+  @keyframes fadeSlideUp {
+    from { opacity:0; transform: translateY(10px); }
+    to   { opacity:1; transform: translateY(0); }
+  }
+
+  #msg .key { color: var(--fragment); }
+
+  /* button */
+  #msg button {
+    margin-top: 6px;
+    background: transparent;
+    border: 1px solid var(--process);
+    color: var(--process);
+    padding: 10px 26px;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.2s;
+    opacity: 1;
+  }
+  #msg.anim-victory button, #msg.anim-death button {
+    opacity: 0;
+    animation: fadeSlideUp 0.4s ease 1.1s forwards;
+  }
+  #msg.anim-death button { border-color: var(--gc); color: var(--gc); }
+  #msg.anim-death button:hover { background: rgba(232,100,60,0.12); }
+  #msg button:hover, #msg button:focus { background: rgba(61,214,196,0.12); outline: none; }
+
+  /* particle burst canvas sits over the game canvas, under the msg */
+  #burst-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+    pointer-events: none;
+  }
+  #touch {
+    display: none;
+    width: 100%;
+    max-width: 760px;
+    margin-top: 4px;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+  }
+  #touch button {
+    background: #101820;
+    border: 1px solid #1f3540;
+    color: #6b8a96;
+    padding: 16px 0;
+    font-family: inherit;
+    font-size: 16px;
+    border-radius: 4px;
+    touch-action: manipulation;
+  }
+  #touch button:active { background: rgba(61,214,196,0.15); color: var(--process); }
+  @media (hover: none) and (pointer: coarse) { #touch { display: grid; } }
+  .hint { font-size: 10px; color: #3a525c; letter-spacing: 2px; margin-top: 2px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <span class="title">DEFRAG</span>
+    <span class="stat">FRAG <b id="frags">0/0</b></span>
+    <span class="stat">PROC <b id="lives">3</b></span>
+    <span class="stat">SECTOR <b id="level">1</b></span>
+    <span class="stat" id="zoomStat" style="cursor:pointer;color:#3dd6c4" onclick="zoomMode=zoomMode==='normal'?'wide':'normal'" title="Tab to toggle">⊡</span>
+  </div>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <canvas id="burst-canvas"></canvas>
+    <div id="msg" class="visible">
+      <h1>DEFRAG</h1>
+      <p>You are a stray <span class="key">process</span> loose in a decaying mainframe. Recover every <span class="key">memory fragment</span>, then reach a conduit to the next sector. The <span class="key">garbage collectors</span> want to reclaim you.</p>
+      <p>Move <span class="key">← →</span> &nbsp; climb <span class="key">↑ ↓</span> &nbsp; dig <span class="key">Z</span> / <span class="key">X</span> &nbsp; zoom <span class="key">Tab</span></p>
+      <button id="startBtn">INITIALIZE</button>
+      <button id="importBtn" style="background:transparent;border:1px solid #1d3540;color:#6b8a96;padding:7px 20px;font-family:inherit;font-size:11px;letter-spacing:3px;text-transform:uppercase;cursor:pointer;" onmouseover="this.style.borderColor='#2a5060';this.style.color='#9ab8c4'" onmouseout="this.style.borderColor='#1d3540';this.style.color='#6b8a96'">LOAD LEVELS</button>
+      <div id="importStatus" class="hint"></div>
+      <div class="hint">dig a memory hole — trap a collector in an old one and it gets purged</div>
+    </div>
+  </div>
+  <div id="touch">
+    <button data-k="dig-l">⟲ DIG</button>
+    <button data-k="left">←</button>
+    <button data-k="up">↑</button>
+    <button data-k="down">↓</button>
+    <button data-k="right">→</button>
+    <button data-k="dig-r">DIG ⟳</button>
+    <button data-k="zoom">⊡</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  DEFRAG — a Lode Runner engine reskinned as mainframe defrag
+//  Single-file. Code-drawn sprites. Grid + gravity + dig AI.
+// ============================================================
+
+const TILE = 28;          // logical tile size
+const COLS = 28;
+const ROWS = 16;
+const W = COLS * TILE;
+const H = ROWS * TILE;
+
+// ---- WEB AUDIO SETUP ----
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const master = audioCtx.createGain();
+master.gain.value = 0.18;
+master.connect(audioCtx.destination);
+
+// global lowpass filter — swept by guard proximity
+const filter = audioCtx.createBiquadFilter();
+filter.type = 'lowpass';
+filter.frequency.value = 4000;
+filter.connect(master);
+
+// ------------------------------------------------------------------
+//  CHIPTUNE SEQUENCER  — Spy vs Spy inspired manic loop
+//  Square wave melody + sawtooth bass + glitch skips + detune drift
+// ------------------------------------------------------------------
+// Note frequencies (Hz) — C major ish with a few chromatic spice notes
+const NOTE = {
+  C4:261.6, D4:293.7, Eb4:311.1, E4:329.6, F4:349.2,
+  G4:392.0, Ab4:415.3, A4:440.0, Bb4:466.2, B4:493.9,
+  C5:523.3, D5:587.3, E5:659.3, F5:698.5, G5:784.0,
+  C3:130.8, G3:196.0, F3:174.6, Bb3:233.1
+};
+const _ = 0; // rest
+
+// ------------------------------------------------------------------
+//  MULTI-PHRASE SEQUENCER
+//  4 distinct 16-step phrases (A B C D) arranged into a 64-step song
+//  structure. After each full cycle the arranger picks a variation so
+//  it never plays the same order twice. Glitch skips, swing, and
+//  occasional octave drops keep it from feeling mechanical.
+// ------------------------------------------------------------------
+
+// Phrase A — the hook: bouncy call-and-response
+const PA_MEL = [
+  NOTE.G4, NOTE.C5, NOTE.Bb4, NOTE.G4,  NOTE.Eb4, _, NOTE.F4, NOTE.G4,
+  NOTE.A4, NOTE.G4, NOTE.F4,  NOTE.Eb4, NOTE.C4,  _, _,       _
+];
+const PA_BAS = [
+  NOTE.C3, _, NOTE.C3, _, NOTE.Bb3, _, NOTE.Bb3, _,
+  NOTE.F3, _, NOTE.F3, _, NOTE.G3,  _, NOTE.G3,  _
+];
+
+// Phrase B — the answer: more chromatic, slightly menacing
+const PB_MEL = [
+  NOTE.E4, NOTE.F4, NOTE.Ab4, NOTE.G4, _, NOTE.Bb4, NOTE.G4, NOTE.E4,
+  NOTE.F4, _,       NOTE.Eb4, NOTE.D4, NOTE.C4, NOTE.D4, NOTE.Eb4, _
+];
+const PB_BAS = [
+  NOTE.C3, _, NOTE.F3, _, NOTE.Ab3, _, NOTE.G3, _,
+  NOTE.F3, _, NOTE.Eb3,_, NOTE.C3,  _, NOTE.G3, _
+];
+
+// Phrase C — the run: fast ascending/descending flourish
+const PC_MEL = [
+  NOTE.C4, NOTE.D4, NOTE.E4, NOTE.F4, NOTE.G4, NOTE.A4, NOTE.Bb4, NOTE.C5,
+  NOTE.Bb4,NOTE.A4, NOTE.G4, NOTE.F4, NOTE.E4, NOTE.D4, NOTE.C4,  _
+];
+const PC_BAS = [
+  NOTE.C3, _, _, _, NOTE.G3, _, _, _,
+  NOTE.F3, _, _, _, NOTE.G3, _, NOTE.C3, _
+];
+
+// Phrase D — the breakdown: sparse, glitchy, lots of space
+const PD_MEL = [
+  NOTE.G4, _, _, NOTE.Eb4, _, _, NOTE.F4, _,
+  _, NOTE.G4, NOTE.Bb4, _, NOTE.G4, _, _, _
+];
+const PD_BAS = [
+  NOTE.G3, _, NOTE.G3, _, NOTE.C3, _, NOTE.C3, _,
+  NOTE.F3, _, NOTE.F3, _, NOTE.Bb3, _, NOTE.Bb3, _
+];
+
+// Song arrangement — indices into phrase list, chosen per cycle
+const PHRASES = [
+  [PA_MEL, PA_BAS],
+  [PB_MEL, PB_BAS],
+  [PC_MEL, PC_BAS],
+  [PD_MEL, PD_BAS]
+];
+
+// Several possible orderings — arranger picks one each full cycle
+const ARRANGEMENTS = [
+  [0, 1, 0, 2],   // A B A C  (most common, hook-driven)
+  [0, 0, 1, 2],   // A A B C  (delayed variation)
+  [0, 2, 0, 1],   // A C A B  (run early)
+  [0, 1, 3, 0],   // A B D A  (breakdown in the middle)
+  [0, 2, 1, 3],   // A C B D  (ends sparse)
+  [0, 1, 2, 3],   // A B C D  (full tour)
+];
+
+const STEP_MS = 138; // tempo — slightly frantic but not manic
+let seqStep = 0;       // step within current phrase (0-15)
+let seqPhrase = 0;     // which phrase in the current arrangement
+let seqCycle = 0;      // how many full arrangements completed
+let seqArrangement = ARRANGEMENTS[0];
+let seqTimer = null;
+let dittyRunning = false;
+
+function playNote(freq, type, gainVal, dur, dest) {
+  if (!freq) return;
+  try {
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    osc.detune.value = (Math.random() - 0.5) * 14;
+    g.gain.setValueAtTime(gainVal, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc.connect(g);
+    g.connect(dest);
+    osc.start(now);
+    osc.stop(now + dur + 0.02);
+  } catch(e) {}
+}
+
+function seqTick() {
+  if (!dittyRunning) return;
+
+  const [melPhrase, basPhrase] = PHRASES[seqArrangement[seqPhrase]];
+  const mel = melPhrase[seqStep];
+  const bas = basPhrase[seqStep];
+
+  // glitch: 6% chance to skip, 3% chance to drop an octave
+  const skip = Math.random() < 0.06;
+  const drop = Math.random() < 0.03;
+  if (!skip) {
+    playNote(mel ? (drop ? mel * 0.5 : mel) : 0, 'square',   0.11, STEP_MS * 0.001 * 0.65, filter);
+    playNote(bas, 'sawtooth', 0.065, STEP_MS * 0.001 * 0.88, filter);
+  }
+
+  seqStep++;
+  if (seqStep >= 16) {
+    seqStep = 0;
+    seqPhrase++;
+    if (seqPhrase >= seqArrangement.length) {
+      seqPhrase = 0;
+      seqCycle++;
+      // pick a new arrangement each cycle (avoid repeating the last one)
+      let next;
+      do { next = Math.floor(Math.random() * ARRANGEMENTS.length); }
+      while (next === ARRANGEMENTS.indexOf(seqArrangement) && ARRANGEMENTS.length > 1);
+      seqArrangement = ARRANGEMENTS[next];
+    }
+  }
+
+  // swing: odd steps are slightly late
+  const swing = (seqStep % 2 === 1) ? 10 : 0;
+  seqTimer = setTimeout(seqTick, STEP_MS + swing);
+}
+
+function startDitty() {
+  if (dittyRunning) return;
+  dittyRunning = true;
+  seqStep = 0; seqPhrase = 0; seqCycle = 0;
+  seqArrangement = ARRANGEMENTS[0];
+  seqTick();
+}
+function stopDitty() {
+  dittyRunning = false;
+  if (seqTimer) clearTimeout(seqTimer);
+}
+
+// ambient lofi sub-bass bed underneath the ditty
+const bedOsc = audioCtx.createOscillator();
+bedOsc.type = 'sine';
+bedOsc.frequency.value = 55;
+const bedGain = audioCtx.createGain();
+bedGain.gain.value = 0.06;
+bedOsc.connect(bedGain);
+bedGain.connect(filter);
+bedOsc.start();
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+// hi-dpi crispness
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+canvas.width = W * DPR;
+canvas.height = H * DPR;
+canvas.style.width = Math.min(W, 760) + 'px';
+canvas.style.height = (Math.min(W, 760) * H / W) + 'px';
+ctx.scale(DPR, DPR);
+ctx.imageSmoothingEnabled = false;
+
+const COL = {
+  void: '#0a0e12', rail: '#142028', railLit: '#1d3540',
+  conduit: '#2a4d5c', conduitLit: '#4a8294',
+  process: '#3dd6c4', processDim: '#1f7a70',
+  gc: '#e8643c', gcDim: '#7a3420',
+  fragment: '#d4c84a', cable: '#3a5560',
+  memBlock: '#1a2832', memEdge: '#243a47'
+};
+
+// ---- Tile legend -------------------------------------------
+// '.' empty            '#' memory block (diggable)
+// '=' bus rail (solid, undiggable)
+// 'H' conduit (ladder) 'h' conduit that's hidden until last frag
+// '-' cable (rope)     '*' fragment (gold)
+// 'P' player spawn     'G' guard spawn
+// 'S' solid undiggable platform top that also acts like floor edge
+// ------------------------------------------------------------
+
+const LEVELS = [
+// SECTOR 1
+[
+"..............H.............",
+"..............H.............",
+"..............H.............",
+"###...........H............#",
+"#*#...........H............#",
+"###...........H............#",
+"..............H.............",
+"..............H.............",
+"..##..........H............#",
+"..#*#.........H..........#*#",
+"..###.........H.............",
+"..............H.............",
+"..##..........H......##.....",
+"..#*..........H.......*#....",
+"..P...........H..........G..",
+"============================"
+],
+// SECTOR 2
+[
+"..............H.............",
+"......G.......H.......G.....",
+"..............H.............",
+"..##########..H..##########.",
+"..#*......*#..H..#*......*#.",
+"..##########..H..##########.",
+"..............H.............",
+"...########...H...########..",
+"..............H.............",
+"..............H.............",
+"..##....##....H....##....##.",
+"..##*..*##....H....##*..*##.",
+"..########....H....########.",
+"..............H.............",
+"..P...........H...........G.",
+"============================"
+],
+// SECTOR 3
+[
+"..............H.............",
+"..........=...H...=.........",
+"..........=...H...=.........",
+"====.=========H=========.===",
+"...*.......*..H..*.......*..",
+".##====H===#==H==#===H====##",
+".##....H...#..H..#...H....##",
+".##====H===#==H==#===H====##",
+".......H......H......H......",
+"====H==H===#==H==#===H==H===",
+"..*.H.....#...H...#.....*...",
+"====H==#######H#######==H===",
+"....H....*....H....*....H...",
+"====H=========H=========H===",
+"..P.H.....G...H...G.....H...",
+"============================"
+],
+// SECTOR 4
+[
+"..............H.............",
+"..###.........H........###..",
+"..#*..........H.........*#..",
+"..###.........H........###..",
+".............................",
+"...........#..H.#...........",
+"...........#..H.#...........",
+".............................",
+"........G.....H....G........",
+".............................",
+".............................",
+"..###.....#...H..#.....###..",
+"..#*......#...H..#......*#..",
+"..###.....#...H..#.....###..",
+"..P...........H...........G.",
+"============================"
+]
+];
+
+// ------------------------------------------------------------
+let grid, frags, fragsTotal, level = 0, lives = 3;
+let collectedFrags = new Set(); // "x,y" of fragments already collected this level — survives death
+let player, guards, holes, state = 'menu', exitOpen;
+let shakeT = 0, glitchT = 0, tick = 0, digFlash = null, absorbFx = [];
+let breathing = 0;
+let zoomLevel = 1.0;    // current zoom (animated)
+let targetZoom = 1.0;   // what we're aiming for
+let zoomMode = 'normal'; // 'normal' | 'wide'
+
+function parseLevel(map) {
+  grid = [];
+  guards = [];
+  holes = [];
+  frags = 0; fragsTotal = 0;
+  exitOpen = false;
+  for (let y = 0; y < ROWS; y++) {
+    const row = [];
+    for (let x = 0; x < COLS; x++) {
+      let ch = map[y][x];
+      let t = '.';
+      if (ch === '#') t = '#';
+      else if (ch === '=') t = '=';
+      else if (ch === 'H') t = 'H';
+      else if (ch === '-') t = '-';
+      else if (ch === '*') {
+        fragsTotal++;
+        // skip re-placing a fragment already collected this level (death respawn)
+        if (collectedFrags.has(x + ',' + y)) { t = '.'; frags++; }
+        else t = '*';
+      }
+      else if (ch === 'P') { player = mkActor(x, y, true); t = '.'; }
+      else if (ch === 'G') { guards.push(mkActor(x, y, false)); t = '.'; }
+      row.push(t);
+    }
+    grid.push(row);
+  }
+}
+
+function mkActor(x, y, isPlayer) {
+  return {
+    x: x * TILE, y: y * TILE, vx: 0, vy: 0,
+    dir: 1, frame: 0, frameT: 0,
+    isPlayer, onLadder: false, onRope: false,
+    falling: false, alive: true,
+    inHole: null, holeTimer: 0, exitCell: null, escapeCool: 0,
+    respawn: { x, y }, lagBuf: []   // lagBuf used for guard "dropped-frame" interpolation
+  };
+}
+
+function tileAt(px, py) {
+  const cx = Math.floor(px / TILE), cy = Math.floor(py / TILE);
+  if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) return '=';
+  return grid[cy][cx];
+}
+function tileCell(cx, cy) {
+  if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) return '=';
+  return grid[cy][cx];
+}
+
+function isSolid(t) { return t === '#' || t === '='; }
+function isClimb(t) { return t === 'H'; }
+function isRope(t) { return t === '-'; }
+
+// center-cell helpers
+function cellOf(a) {
+  return { cx: Math.round(a.x / TILE), cy: Math.round(a.y / TILE) };
+}
+
+// ------------------------------------------------------------
+//  INPUT
+// ------------------------------------------------------------
+const keys = {};
+const press = {};
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (['arrowleft','arrowright','arrowup','arrowdown',' '].includes(e.key.toLowerCase()) || e.key.startsWith('Arrow')) e.preventDefault();
+  keys[k] = true;
+  if (k === 'z') press.digL = true;
+  if (k === 'x') press.digR = true;
+  if (e.key === 'Tab') { e.preventDefault(); zoomMode = zoomMode === 'normal' ? 'wide' : 'normal'; }
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// touch
+const tmap = { left:'arrowleft', right:'arrowright', up:'arrowup', down:'arrowdown' };
+document.querySelectorAll('#touch button').forEach(b => {
+  const k = b.dataset.k;
+  const on = e => { e.preventDefault();
+    if (k === 'dig-l') press.digL = true;
+    else if (k === 'dig-r') press.digR = true;
+    else if (k === 'zoom') { zoomMode = zoomMode === 'normal' ? 'wide' : 'normal'; }
+    else keys[tmap[k]] = true; };
+  const off = e => { e.preventDefault(); if (tmap[k]) keys[tmap[k]] = false; };
+  b.addEventListener('touchstart', on, {passive:false});
+  b.addEventListener('touchend', off, {passive:false});
+  b.addEventListener('mousedown', on);
+  b.addEventListener('mouseup', off);
+});
+
+function left()  { return keys['arrowleft'] || keys['a']; }
+function right() { return keys['arrowright'] || keys['d']; }
+function up()    { return keys['arrowup'] || keys['w']; }
+function down()  { return keys['arrowdown'] || keys['s']; }
+
+// ------------------------------------------------------------
+//  MOVEMENT
+// ------------------------------------------------------------
+const SPEED = 1.7;
+const GUARD_SPEED = 1.15;
+
+function alignedX(a) { return Math.abs(a.x - Math.round(a.x / TILE) * TILE) < SPEED; }
+function alignedY(a) { return Math.abs(a.y - Math.round(a.y / TILE) * TILE) < SPEED; }
+function snapX(a) { a.x = Math.round(a.x / TILE) * TILE; }
+function snapY(a) { a.y = Math.round(a.y / TILE) * TILE; }
+
+function footTile(a) {
+  const cx = Math.round(a.x / TILE);
+  const cy = Math.round(a.y / TILE);
+  return tileCell(cx, cy + 1);
+}
+function hereTile(a) {
+  return tileCell(Math.round(a.x / TILE), Math.round(a.y / TILE));
+}
+
+// support(): is the cell at (cx,cy) standing on something?
+function support(cx, cy) {
+  const below = tileCell(cx, cy + 1);
+  const here = tileCell(cx, cy);
+  if (isSolid(below)) return true;
+  if (isClimb(here) || isClimb(below)) return true;
+  if (isRope(here)) return true;
+  for (const g of guards) {
+    if (g.inHole && g !== arguments[2]) {
+      const gc = cellOf(g);
+      if (gc.cx === cx && gc.cy === cy + 1) return true;
+    }
+  }
+  return false;
+}
+function canStand(a) { const c = cellOf(a); return support(c.cx, c.cy); }
+
+// Grid-locked movement: walking snaps to the row, climbing snaps to the
+// column. That keeps the actor aligned so climb/dig always have a clean cell.
+function moveActor(a, wantL, wantR, wantU, wantD, speed) {
+  let cx = Math.round(a.x / TILE);
+  let cy = Math.round(a.y / TILE);
+  const here  = tileCell(cx, cy);
+  const above = tileCell(cx, cy - 1);
+  const below = tileCell(cx, cy + 1);
+
+  a.onLadder = isClimb(here);
+  a.onRope = isRope(here);
+
+  const supported = support(cx, cy);
+  let acted = false;
+
+  // ---- vertical: climbing a conduit (with magnetism) ----
+  // The actor rarely stops exactly on a conduit column, so when up/down is
+  // pressed we find the nearest conduit within ~0.8 tiles and glide onto it
+  // before climbing. Without this, climbing only works on a pixel-perfect
+  // column and feels broken.
+  if (wantU || wantD) {
+    const fx = a.x / TILE;
+    let lcol = null, best = 0.85;
+    for (let c = Math.floor(fx) - 1; c <= Math.ceil(fx) + 1; c++) {
+      let relevant = false;
+      if (wantU) relevant = isClimb(tileCell(c, cy));                 // standing on/at conduit
+      if (wantD) relevant = isClimb(tileCell(c, cy)) || isClimb(tileCell(c, cy + 1)); // conduit at feet
+      if (relevant) {
+        const d = Math.abs(fx - c);
+        if (d < best) { best = d; lcol = c; }
+      }
+    }
+    if (lcol !== null) {
+      const tx = lcol * TILE;
+      if (Math.abs(a.x - tx) > speed) {
+        a.x += Math.sign(tx - a.x) * speed;        // glide onto the column
+        acted = true;
+      } else {
+        a.x = tx;
+        if (wantU && isClimb(tileCell(lcol, cy)) && !isSolid(tileCell(lcol, cy - 1))) {
+          a.y -= speed; acted = true;
+        } else if (wantD && !isSolid(tileCell(lcol, cy + 1))) {
+          a.y += speed; acted = true;
+        }
+      }
+    }
+  }
+
+  // drop off a cable
+  if (!acted && wantD && a.onRope && !isSolid(below)) {
+    a.y += speed;
+    acted = true;
+  }
+
+  if (acted) {
+    a.falling = false;
+    bumpFrame(a);
+    return true;
+  }
+
+  // ---- horizontal: only when supported, on a conduit, or on a cable ----
+  let movedH = false;
+  if (supported || a.onRope || isClimb(here)) {
+    if (wantL && !wantR) {
+      a.dir = -1;
+      if (!isSolid(tileCell(cx - 1, cy))) { a.x -= speed; a.y = cy * TILE; movedH = true; }
+    } else if (wantR && !wantL) {
+      a.dir = 1;
+      if (!isSolid(tileCell(cx + 1, cy))) { a.x += speed; a.y = cy * TILE; movedH = true; }
+    }
+  }
+
+  // ---- gravity ----
+  cx = Math.round(a.x / TILE);
+  cy = Math.round(a.y / TILE);
+  if (a.inHole) {
+    a.falling = false;
+  } else if (!support(cx, cy)) {
+    a.x = cx * TILE;                 // lock to column while falling
+    a.y += speed + 0.6;
+    a.falling = true;
+  } else {
+    if (a.falling) a.y = Math.round(a.y / TILE) * TILE;
+    a.falling = false;
+  }
+
+  if (movedH) bumpFrame(a);
+  return movedH;
+}
+
+function bumpFrame(a) {
+  a.frameT += 1;
+  if (a.frameT > 5) { a.frameT = 0; a.frame = (a.frame + 1) % 4; }
+}
+
+// ------------------------------------------------------------
+//  DIGGING  (de-rendering a memory cell, diagonally down-ahead)
+// ------------------------------------------------------------
+function tryDig(a, side) {
+  if (a.falling) return;
+  // snap to the nearest column so a dig mid-stride still lines up on the grid
+  a.x = Math.round(a.x / TILE) * TILE;
+  const cx = Math.round(a.x / TILE);
+  const cy = Math.round(a.y / TILE);
+  if (!support(cx, cy)) return;            // must be standing on something
+  const tx = cx + side;                    // one column to the side
+  const ty = cy + 1;                       // one row down
+  const target = tileCell(tx, ty);         // the memory block to de-render
+  const sideCell = tileCell(tx, cy);       // cell beside the player must be open
+  // feedback: always flash the targeted cell so the keypress registers, even
+  // when there's nothing diggable there (e.g. standing on a rail, not brick)
+  digFlash = { x: tx, y: ty, t: 8, ok: (target === '#' && !isSolid(sideCell) && !isClimb(sideCell)) };
+  if (digFlash.ok) {
+    grid[ty][tx] = '.';
+    holes.push({ x: tx, y: ty, t: 0, life: HOLE_LIFE, opening: 14 });
+    shakeT = 6; glitchT = 8;
+    playDigSound();
+  } else {
+    shakeT = 2;                            // tiny nudge so a failed dig still feels felt
+    playFailSound();
+  }
+}
+
+// ---- hole/trap tuning ------------------------------------------------------
+// A dug memory cell stays open for HOLE_LIFE ticks, then the block reforms.
+// A guard that falls in needs CLIMB_OUT ticks to struggle free. So a guard
+// that falls into a FRESH hole escapes, but one that falls in during the last
+// CLIMB_OUT ticks gets reformed-on — absorbed back into the machine.
+const HOLE_LIFE  = 330;   // ~5.5s at 60fps before the cell reforms
+const HOLE_WARN  = 90;    // last 90 ticks: closing/danger phase (== CLIMB_OUT)
+const STRUGGLE   = 30;    // ticks a trapped guard flails before it can climb
+const CLIMB_OUT  = 90;    // total ticks for a guard to climb free
+
+function updateHoles() {
+  for (let i = holes.length - 1; i >= 0; i--) {
+    const h = holes[i];
+    h.t++;
+    if (h.opening > 0) h.opening--;
+    if (h.t > h.life) {
+      // the memory block reforms — anything still inside is reclaimed
+      const occupantP = player.alive && cellOf(player).cx === h.x && cellOf(player).cy === h.y;
+      if (occupantP) killPlayer();
+      for (const g of guards) {
+        if (g.inHole && g.inHole.x === h.x && g.inHole.y === h.y) absorbGuard(g);
+      }
+      grid[h.y][h.x] = '#';
+      glitchT = 6;
+      holes.splice(i, 1);
+    }
+  }
+}
+
+// ------------------------------------------------------------
+//  GUARD AI  — laggy pursuit with dropped-frame feel
+// ------------------------------------------------------------
+function updateGuard(g) {
+  if (!g.alive) return;
+
+  // trapped in a hole: struggle, then climb out — unless the cell reforms first
+  const gc = cellOf(g);
+  if (g.inHole) {
+    g.holeTimer++;
+    // pick an escape cell once: straight up, else up-toward-player, else up-away
+    if (!g.exitCell) {
+      const dir = player.x < g.x ? -1 : 1;
+      // climb out SIDEWAYS onto solid footing — never straight up over the
+      // open hole (that cell has nothing under it, so the guard would just
+      // drop back in, forever). Require the destination to have support.
+      const hasFooting = o =>
+        !isSolid(tileCell(o.x, o.y)) &&
+        (isSolid(tileCell(o.x, o.y + 1)) || isClimb(tileCell(o.x, o.y)) || isClimb(tileCell(o.x, o.y + 1)));
+      const sideOpts = [
+        { x: g.inHole.x + dir, y: g.inHole.y - 1 },   // toward player
+        { x: g.inHole.x - dir, y: g.inHole.y - 1 }    // away from player
+      ];
+      g.exitCell =
+        sideOpts.find(hasFooting) ||                                   // best: solid footing beside hole
+        sideOpts.find(o => !isSolid(tileCell(o.x, o.y))) ||            // else: any open side
+        { x: g.inHole.x, y: g.inHole.y - 1 };                         // last resort: straight up
+    }
+    // after a brief flail, rise smoothly toward the exit cell
+    if (g.holeTimer > STRUGGLE) {
+      const prog = Math.min(1, (g.holeTimer - STRUGGLE) / (CLIMB_OUT - STRUGGLE));
+      const sx = g.inHole.x * TILE, sy = g.inHole.y * TILE;
+      const ex = g.exitCell.x * TILE, ey = g.exitCell.y * TILE;
+      g.x = sx + (ex - sx) * prog;
+      g.y = sy + (ey - sy) * prog;
+      if (prog >= 1) { g.inHole = null; g.holeTimer = 0; g.exitCell = null; g.falling = false; g.escapeCool = 30; }
+    }
+    return;
+  }
+
+  // brief grace after climbing out so it can't be re-trapped by the same hole instantly
+  if (g.escapeCool > 0) g.escapeCool--;
+
+  // did the guard drop into an open cell? trap it (unless it just climbed out)
+  if (g.escapeCool <= 0 && holes.some(h => h.x === gc.cx && h.y === gc.cy)) {
+    if (alignedX(g)) { g.inHole = { x: gc.cx, y: gc.cy }; g.holeTimer = 0; g.exitCell = null; snapX(g); snapY(g); return; }
+  }
+
+  // simple greedy pathing: actively seek ladders to change rows when needed,
+  // with direction commitment so you can predictably bait the guards
+  // (classic Lode Runner behaviour: predictable enough to exploit).
+  if (tick % 2 === 0) {
+    const px = player.x, py = player.y;
+    let wantL=false, wantR=false, wantU=false, wantD=false;
+
+    const dx = px - g.x;
+    const dy = py - g.y;
+    const here = tileCell(gc.cx, gc.cy);
+    const below = tileCell(gc.cx, gc.cy + 1);
+    const above = tileCell(gc.cx, gc.cy - 1);
+    const onLadder = isClimb(here);
+
+    // Are we already on a ladder and need to change rows? Use it (priority).
+    if (onLadder && Math.abs(dy) > TILE * 0.5) {
+      if (dy < 0) wantU = true; else wantD = true;
+    }
+    // Is there a ladder right here we can step onto in the needed direction?
+    else if (Math.abs(dy) > TILE * 0.7) {
+      const seekUp = dy < 0;
+      // Check if current column has a ladder we can use
+      if ((seekUp && isClimb(above)) || (!seekUp && isClimb(below))) {
+        // step onto ladder
+        if (seekUp) wantU = true; else wantD = true;
+      } else {
+        // Find nearest ladder column that helps us change rows
+        let bestCol = null, bestDist = 999;
+        for (let dxs = 1; dxs < 14; dxs++) {
+          for (const dir of [-1, 1]) {
+            const cx = gc.cx + dxs * dir;
+            if (cx < 0 || cx >= COLS) continue;
+            // A useful ladder: conduit at guard's row OR row guard needs to reach,
+            // AND we can stand at that column on guard's row (not solid)
+            if (isSolid(tileCell(cx, gc.cy))) continue;
+            const ladderHere = isClimb(tileCell(cx, gc.cy));
+            const ladderAdj  = isClimb(tileCell(cx, gc.cy + (seekUp ? -1 : 1)));
+            if (ladderHere || ladderAdj) {
+              if (dxs < bestDist) { bestDist = dxs; bestCol = cx; }
+            }
+          }
+          if (bestCol !== null) break; // closest wins
+        }
+        if (bestCol !== null && bestCol !== gc.cx) {
+          // walk toward the ladder, ignoring the player's horizontal position
+          if (bestCol < gc.cx) wantL = true;
+          else wantR = true;
+        } else {
+          // no ladder available — chase horizontally
+          if (dx < -2) wantL = true; else if (dx > 2) wantR = true;
+        }
+      }
+    }
+    // Same row — chase horizontally
+    else {
+      if (dx < -2) wantL = true;
+      else if (dx > 2) wantR = true;
+    }
+
+    // direction commitment: prevent jitter when guard is right next to a ladder
+    // but conflicted between climbing and chasing
+    const newDir = wantL ? -1 : wantR ? 1 : 0;
+    if (newDir !== 0) {
+      if (g._lastDir !== undefined && newDir !== g._lastDir && g._commitTimer > 0) {
+        // hold previous direction briefly
+        wantL = g._lastDir < 0;
+        wantR = g._lastDir > 0;
+        g._commitTimer--;
+      } else {
+        g._lastDir = newDir;
+        g._commitTimer = 6;
+      }
+    } else {
+      g._commitTimer = 0;
+    }
+
+    g._intent = { wantL, wantR, wantU, wantD };
+  }
+  const it = g._intent || {};
+  moveActor(g, it.wantL, it.wantR, it.wantU, it.wantD, GUARD_SPEED);
+}
+function h_of(g){ return cellOf(g).cy; }
+
+function absorbGuard(g) {
+  // reclaimed by the machine: spawn an absorb pop, then redeploy up top
+  absorbFx.push({ x: g.inHole ? g.inHole.x : cellOf(g).cx, y: g.inHole ? g.inHole.y : cellOf(g).cy, t: 24 });
+  g.inHole = null; g.holeTimer = 0; g.exitCell = null;
+  g.x = g.respawn.x * TILE; g.y = 0;
+  g.falling = true;
+  glitchT = 26; shakeT = 9;
+}
+
+// ---- AUDIO EFFECTS ----
+function resumeAudio() {
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playDigSound() {
+  try {
+    resumeAudio();
+    const now = audioCtx.currentTime;
+    const noise = audioCtx.createBufferSource();
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.15, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    noise.buffer = buf;
+    const noiseGain = audioCtx.createGain();
+    noiseGain.gain.setValueAtTime(0.25, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    noise.connect(noiseGain);
+    noiseGain.connect(master);
+    noise.start(now);
+    // pitch pop: 400 → 200 Hz
+    const pop = audioCtx.createOscillator();
+    pop.type = 'sine';
+    pop.frequency.setValueAtTime(400, now);
+    pop.frequency.exponentialRampToValueAtTime(200, now + 0.1);
+    const popGain = audioCtx.createGain();
+    popGain.gain.setValueAtTime(0.1, now);
+    popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    pop.connect(popGain);
+    popGain.connect(master);
+    pop.start(now);
+    pop.stop(now + 0.12);
+  } catch(e) {}
+}
+
+function playFailSound() {
+  try {
+    resumeAudio();
+    const now = audioCtx.currentTime;
+    const beep = audioCtx.createOscillator();
+    beep.type = 'sine';
+    beep.frequency.setValueAtTime(150, now);
+    beep.frequency.exponentialRampToValueAtTime(80, now + 0.08);
+    const beepGain = audioCtx.createGain();
+    beepGain.gain.setValueAtTime(0.05, now);
+    beepGain.gain.linearRampToValueAtTime(0, now + 0.09);  // linear to zero, not exponential
+    beep.connect(beepGain);
+    beepGain.connect(master);
+    beep.start(now);
+    beep.stop(now + 0.1);
+  } catch(e) {}
+}
+
+function playPickupChime() {
+  try {
+    resumeAudio();
+    const now = audioCtx.currentTime;
+    [NOTE.E5, NOTE.G5].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0, now + i * 0.07);
+      g.gain.linearRampToValueAtTime(0.1, now + i * 0.07 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.07 + 0.12);
+      osc.connect(g); g.connect(master);
+      osc.start(now + i * 0.07);
+      osc.stop(now + i * 0.07 + 0.14);
+    });
+  } catch(e) {}
+}
+
+function playDeathSting() {
+  try {
+    resumeAudio();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.4);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.2, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    osc.connect(g); g.connect(master);
+    osc.start(now); osc.stop(now + 0.5);
+    // glitch burst
+    const noise = audioCtx.createBufferSource();
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.15, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    noise.buffer = buf;
+    const ng = audioCtx.createGain();
+    ng.gain.setValueAtTime(0.15, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    noise.connect(ng); ng.connect(master);
+    noise.start(now);
+  } catch(e) {}
+}
+
+function filterTension(distance) {
+  // guards nearby: sweep filter freq down (lower = darker, more menacing)
+  // distance in tiles from player to nearest guard
+  const freq = 4000 - Math.max(0, 3 - distance) * 1200;  // 4000 down to 1600 at dist 0
+  filter.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.2);
+}
+
+// ------------------------------------------------------------
+//  COLLECT / DEATH / WIN
+// ------------------------------------------------------------
+function checkPickup() {
+  const c = cellOf(player);
+  if (tileCell(c.cx, c.cy) === '*') {
+    grid[c.cy][c.cx] = '.';
+    collectedFrags.add(c.cx + ',' + c.cy);
+    frags++;
+    glitchT = 4;
+    playPickupChime();
+    if (frags >= fragsTotal) openExit();
+  }
+}
+function openExit() {
+  exitOpen = true;
+  // reveal hidden conduits 'h' -> 'H' and add an exit column shimmer at top row ladders
+  for (let y = 0; y < ROWS; y++)
+    for (let x = 0; x < COLS; x++)
+      if (grid[y][x] === 'h') grid[y][x] = 'H';
+  glitchT = 20; shakeT = 10;
+}
+function killPlayer() {
+  if (!player.alive) return;
+  player.alive = false;
+  shakeT = 14; glitchT = 30;
+  playDeathSting();
+  lives--;
+  setTimeout(() => {
+    if (lives <= 0) { gameOver(); }
+    else { softReset(); }
+  }, 700);
+}
+function checkGuardCollision() {
+  if (!player.alive) return;
+  for (const g of guards) {
+    if (g.inHole) continue;
+    if (Math.abs(g.x - player.x) < TILE*0.6 && Math.abs(g.y - player.y) < TILE*0.6) {
+      killPlayer(); return;
+    }
+  }
+}
+function checkExit() {
+  if (!exitOpen) return;
+  const c = cellOf(player);
+  // exit = reach top row on a conduit
+  if (c.cy <= 0 && isClimb(tileCell(c.cx, 0))) nextLevel();
+}
+
+function softReset() {
+  // re-parse the level — parseLevel now correctly skips fragments already
+  // recorded in collectedFrags, so progress survives a death cleanly.
+  parseLevel(LEVELS[level]);
+  if (frags >= fragsTotal) openExit();
+  player.alive = true;
+  updateHUD();
+}
+
+function nextLevel() {
+  level++;
+  collectedFrags.clear(); // fresh sector, fresh fragments
+  if (level >= LEVELS.length) { victory(); return; }
+  startLevel();
+}
+
+// ------------------------------------------------------------
+//  RENDER  — code-drawn sprites, glitch + lofi atmosphere
+// ------------------------------------------------------------
+function draw() {
+  // dynamic zoom: lerp toward target smoothly
+  breathing += 0.008;
+  const breathPulse = 1 + Math.sin(breathing) * 0.003; // very subtle living pulse
+  zoomLevel += (targetZoom - zoomLevel) * 0.06;         // smooth ease toward target
+  const bz = zoomLevel * breathPulse;
+
+  ctx.save();
+  // screen shake
+  let sx = 0, sy = 0;
+  if (shakeT > 0) { sx = (Math.random()-0.5)*shakeT; sy = (Math.random()-0.5)*shakeT; shakeT *= 0.86; if (shakeT<0.4) shakeT=0; }
+  ctx.translate(W/2, H/2); ctx.scale(bz, bz); ctx.translate(-W/2 + sx, -H/2 + sy);
+
+  // void bg
+  ctx.fillStyle = COL.void;
+  ctx.fillRect(-20, -20, W+40, H+40);
+
+  // faint grid traces
+  ctx.strokeStyle = 'rgba(40,70,84,0.06)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x*TILE, 0); ctx.lineTo(x*TILE, H); ctx.stroke(); }
+  for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0, y*TILE); ctx.lineTo(W, y*TILE); ctx.stroke(); }
+
+  // tiles
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      drawTile(grid[y][x], x, y);
+    }
+  }
+  // holes (de-rendered cells) — show dissolving pixels
+  for (const h of holes) drawHole(h);
+
+  // dig-attempt flash — confirms the keypress landed even on a failed dig
+  if (digFlash) {
+    const fx = digFlash.x * TILE, fy = digFlash.y * TILE;
+    const a = digFlash.t / 8;
+    ctx.strokeStyle = digFlash.ok
+      ? 'rgba(61,214,196,' + a + ')'      // teal = successful cut
+      : 'rgba(232,100,60,' + (a * 0.7) + ')'; // orange = nothing to cut here
+    ctx.lineWidth = 2;
+    ctx.strokeRect(fx + 3, fy + 3, TILE - 6, TILE - 6);
+    digFlash.t--;
+    if (digFlash.t <= 0) digFlash = null;
+  }
+
+  // actors
+  drawAbsorbFx();
+  for (const g of guards) drawGuard(g);
+  if (player.alive) drawProcess(player);
+  else drawDeath(player);
+
+  ctx.restore();
+
+  // glitch overlay (event-driven tearing)
+  if (glitchT > 0) { drawGlitch(); glitchT--; }
+
+  // scanlines + vignette (lofi warmth)
+  drawScanlines();
+}
+
+function px(x){ return x; } // alias
+
+function drawTile(t, gx, gy) {
+  const x = gx*TILE, y = gy*TILE;
+  if (t === '=') {
+    // bus rail — solid undiggable trace
+    ctx.fillStyle = COL.rail;
+    ctx.fillRect(x+1, y+1, TILE-2, TILE-2);
+    ctx.fillStyle = COL.railLit;
+    ctx.fillRect(x+1, y+1, TILE-2, 2);
+    // trace dots
+    ctx.fillStyle = 'rgba(74,130,148,0.25)';
+    const phase = (tick*0.5 + gx*4) % TILE;
+    ctx.fillRect(x + phase, y + TILE/2 - 1, 3, 2);
+  } else if (t === '#') {
+    // memory block (diggable chip cell)
+    ctx.fillStyle = COL.memBlock;
+    ctx.fillRect(x+2, y+2, TILE-4, TILE-4);
+    ctx.strokeStyle = COL.memEdge;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x+2.5, y+2.5, TILE-5, TILE-5);
+    // pin notches
+    ctx.fillStyle = 'rgba(61,214,196,0.10)';
+    for (let i=0;i<3;i++){ ctx.fillRect(x+6+i*7, y+TILE-4, 3, 2); ctx.fillRect(x+6+i*7, y+2, 3, 2); }
+  } else if (t === 'H') {
+    // conduit (ladder) — vertical pipe with flowing data dots
+    ctx.fillStyle = COL.conduit;
+    ctx.fillRect(x+5, y, 3, TILE);
+    ctx.fillRect(x+TILE-8, y, 3, TILE);
+    ctx.fillStyle = COL.conduitLit;
+    for (let i=0;i<3;i++){ const ry = (y + (tick*0.8 + i*10) % TILE); ctx.fillRect(x+5, ry, 3, 4); ctx.fillRect(x+TILE-8, ry, 3, 4); }
+    // rungs
+    ctx.fillStyle = COL.conduit;
+    for (let r=0;r<3;r++) ctx.fillRect(x+5, y+5+r*9, TILE-10, 2);
+  } else if (t === '-') {
+    // cable (rope)
+    ctx.strokeStyle = COL.cable;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y+5);
+    ctx.quadraticCurveTo(x+TILE/2, y+9, x+TILE, y+5);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(74,130,148,0.4)';
+    const cph = (tick*1.1 + gx*7) % TILE;
+    ctx.fillRect(x+cph, y+5+Math.sin(cph*0.2)*1.5, 2, 2);
+  } else if (t === '*') {
+    // memory fragment (gold) — glowing bit
+    const pulse = 0.6 + Math.sin(tick*0.12 + gx + gy)*0.4;
+    ctx.save();
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = COL.fragment;
+    const cxp = x+TILE/2, cyp = y+TILE/2;
+    ctx.beginPath();
+    ctx.moveTo(cxp, cyp-6); ctx.lineTo(cxp+5, cyp); ctx.lineTo(cxp, cyp+6); ctx.lineTo(cxp-5, cyp);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = pulse*0.3;
+    ctx.fillRect(cxp-7, cyp-7, 14, 14);
+    ctx.restore();
+  }
+}
+
+function drawHole(h) {
+  const x = h.x*TILE, y = h.y*TILE;
+  const refillFrac = h.t / h.life;
+  const closing = (h.life - h.t) <= HOLE_WARN;   // entering the deadly phase
+  // dissolving pixel field — denser near refill time
+  ctx.fillStyle = closing
+    ? 'rgba(232,100,60,' + (0.18 + refillFrac*0.55) + ')'   // orange = about to reform
+    : 'rgba(36,58,71,'   + (0.15 + refillFrac*0.4)  + ')';  // dim = still open/safe
+  const n = 6 + Math.floor(refillFrac*34);
+  for (let i=0;i<n;i++){
+    const rx = x + 3 + Math.random()*(TILE-6);
+    const ry = y + 3 + Math.random()*(TILE-6);
+    ctx.fillRect(rx|0, ry|0, 2, 2);
+  }
+  // border: teal while safe, pulsing orange while closing
+  if (closing) {
+    const pulse = 0.4 + Math.abs(Math.sin(tick*0.3))*0.6;
+    ctx.strokeStyle = 'rgba(232,100,60,'+pulse+')';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x+2, y+2, TILE-4, TILE-4);
+  } else if (h.opening > 0) {
+    ctx.strokeStyle = 'rgba(61,214,196,'+(h.opening/14)+')';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x+2, y+2, TILE-4, TILE-4);
+  }
+}
+
+function drawAbsorbFx() {
+  for (let i = absorbFx.length - 1; i >= 0; i--) {
+    const f = absorbFx[i];
+    const cx = f.x*TILE + TILE/2, cy = f.y*TILE + TILE/2;
+    const a = f.t / 24;
+    // imploding ring — the machine pulling the daemon in
+    const r = 4 + (1 - a) * TILE * 0.9;
+    ctx.strokeStyle = 'rgba(232,100,60,' + a + ')';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
+    // inward shards
+    ctx.fillStyle = 'rgba(232,100,60,' + a + ')';
+    for (let k=0;k<6;k++){
+      const ang = k/6 * Math.PI*2 + tick*0.1;
+      const rr = r*0.7;
+      ctx.fillRect(cx + Math.cos(ang)*rr - 1, cy + Math.sin(ang)*rr - 1, 2, 2);
+    }
+    // "PURGED" label
+    ctx.save();
+    ctx.globalAlpha = a * 0.8;
+    ctx.fillStyle = '#ff5630';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('PURGED', cx, cy + 3);
+    ctx.restore();
+    f.t--;
+    if (f.t <= 0) absorbFx.splice(i, 1);
+  }
+}
+
+function drawProcess(a) {
+  const x = a.x, y = a.y;
+  const cx = x + TILE/2, cy = y + TILE/2;
+  // glow
+  ctx.save();
+  ctx.shadowColor = COL.process; ctx.shadowBlur = 8;
+  ctx.fillStyle = COL.process;
+  // body: a small cursor-entity, legs animate
+  const legPhase = Math.sin(a.frame * Math.PI/2) * 3;
+  // torso
+  ctx.fillRect(cx-3, y+8, 6, 9);
+  // head
+  ctx.fillRect(cx-3, y+4, 6, 4);
+  // legs
+  ctx.fillRect(cx-3, y+17, 2, 5 + (a.dir>0?legPhase:-legPhase)*0.4);
+  ctx.fillRect(cx+1, y+17, 2, 5 - (a.dir>0?legPhase:-legPhase)*0.4);
+  // direction eye
+  ctx.fillStyle = COL.void;
+  ctx.fillRect(cx + (a.dir>0?0:-1), y+5, 2, 2);
+  ctx.restore();
+}
+
+function drawGuard(g) {
+  if (!g.alive) return;
+  let x = g.x, y = g.y;
+  // trapped: jitter while flailing, and tint red once the cell is closing on it
+  let trappedDanger = false;
+  if (g.inHole) {
+    if (g.holeTimer <= STRUGGLE) { x += (Math.random()-0.5)*3; y += (Math.random()-0.5)*2; }
+    const h = holes.find(hh => hh.x === g.inHole.x && hh.y === g.inHole.y);
+    if (h && (h.life - h.t) <= HOLE_WARN) trappedDanger = true;
+  }
+  const cx = x + TILE/2;
+  ctx.save();
+  // laggy ghost-trail (dropped frame feel)
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = COL.gcDim;
+  ctx.fillRect(cx-4 - g.dir*3, y+6, 8, 14);
+  ctx.globalAlpha = 1;
+  ctx.shadowColor = trappedDanger ? '#ff3b1a' : COL.gc; ctx.shadowBlur = trappedDanger ? 10 : 6;
+  ctx.fillStyle = g.inHole ? (trappedDanger ? '#ff5630' : COL.gcDim) : COL.gc;
+  // body — bulkier, hunched daemon
+  ctx.fillRect(cx-4, y+6, 8, 11);
+  ctx.fillRect(cx-4, y+3, 8, 4);
+  // legs
+  const lp = Math.sin(g.frame*Math.PI/2)*2;
+  ctx.fillRect(cx-4, y+17, 3, 5+lp*0.3);
+  ctx.fillRect(cx+1, y+17, 3, 5-lp*0.3);
+  // eye
+  ctx.fillStyle = COL.void;
+  ctx.fillRect(cx + (g.dir>0?1:-3), y+5, 2, 2);
+  ctx.restore();
+}
+
+function drawDeath(a) {
+  // fragmenting dissolve
+  ctx.fillStyle = COL.process;
+  for (let i=0;i<14;i++){
+    ctx.globalAlpha = Math.random()*0.7;
+    ctx.fillRect(a.x + Math.random()*TILE, a.y + Math.random()*TILE, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawGlitch() {
+  // horizontal tear bands
+  const bands = 2 + Math.floor(Math.random()*3);
+  for (let i=0;i<bands;i++){
+    const by = Math.random()*H;
+    const bh = 2 + Math.random()*10;
+    const off = (Math.random()-0.5)*12;
+    const slice = ctx.getImageData(0, by*DPR, canvas.width, bh*DPR);
+    ctx.putImageData(slice, off*DPR, by*DPR);
+  }
+  // chromatic flicker tint
+  ctx.fillStyle = 'rgba(232,100,60,0.04)';
+  ctx.fillRect(0,0,W,H);
+}
+
+let scanCanvas;
+function drawScanlines() {
+  ctx.save();
+  ctx.globalAlpha = 0.06;
+  ctx.fillStyle = '#000';
+  for (let y=0; y<H; y+=3) ctx.fillRect(0, y, W, 1);
+  ctx.restore();
+  // vignette
+  const g = ctx.createRadialGradient(W/2, H/2, H*0.3, W/2, H/2, H*0.75);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+}
+
+// ------------------------------------------------------------
+//  LOOP + STATE
+// ------------------------------------------------------------
+function update() {
+  tick++;
+  if (state !== 'play') return;
+
+  if (player.alive) {
+    const wantD = down();
+    moveActor(player, left(), right(), up(), wantD, SPEED);
+    if (press.digL) { tryDig(player, -1); press.digL = false; }
+    if (press.digR) { tryDig(player, 1); press.digR = false; }
+    checkPickup();
+    checkGuardCollision();
+    checkExit();
+    // fall out of world
+    if (player.y > H) killPlayer();
+  }
+  for (const g of guards) updateGuard(g);
+  updateHoles();
+  checkGuardCollision();
+  
+  // audio + zoom: track guard proximity
+  let minDist = 100;
+  for (const g of guards) {
+    if (!g.alive || g.inHole) continue;
+    const d = (Math.abs(g.x - player.x) + Math.abs(g.y - player.y)) / TILE;
+    minDist = Math.min(minDist, d);
+  }
+  filterTension(minDist);
+
+  // dynamic zoom: wide view when guard is far (situational awareness),
+  // zoom in when guard is close (tension, focus)
+  if (zoomMode === 'normal') {
+    if (minDist > 10)      targetZoom = 0.92;   // guard far: gentle pull back
+    else if (minDist > 5)  targetZoom = 0.97;   // guard mid: very subtle
+    else                   targetZoom = 1.0;    // guard close: hold steady, just let the filter speak
+  } else {
+    targetZoom = 0.78;                           // manual wide mode: full map overview
+  }
+
+  updateHUD();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function updateHUD() {
+  document.getElementById('frags').textContent = frags + '/' + fragsTotal;
+  document.getElementById('lives').textContent = Math.max(0, lives);
+  document.getElementById('level').textContent = (level+1);
+  const zs = document.getElementById('zoomStat');
+  if (zs) zs.textContent = zoomMode === 'wide' ? '⊞' : '⊡';
+}
+
+function startLevel() {
+  parseLevel(LEVELS[level]);
+  player.alive = true;
+  updateHUD();
+  state = 'play';
+  hideMsg();
+  startDitty();
+}
+function startGame() {
+  level = 0; lives = 3; frags = 0;
+  collectedFrags.clear();
+  startLevel();
+}
+
+// ---- BURST PARTICLE SYSTEM ----
+const burstCanvas = document.getElementById('burst-canvas');
+const bctx = burstCanvas.getContext('2d');
+let burstParticles = [];
+let burstRaf = null;
+
+// size burst canvas to match game canvas
+burstCanvas.width = canvas.width;
+burstCanvas.height = canvas.height;
+burstCanvas.style.width = canvas.style.width;
+burstCanvas.style.height = canvas.style.height;
+
+function spawnBurst(type) {
+  const ox = canvas.width / 2;
+  const oy = canvas.height / 2;
+  const isVictory = type === 'victory';
+  burstParticles = [];
+  const count = isVictory ? 140 : 90;
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = isVictory ? 2 + Math.random() * 8 : 1.5 + Math.random() * 6;
+    const colours = isVictory
+      ? ['#3dd6c4','#5ef0dc','#d4c84a','#ffffff','#2ab8a8','#3dd6c4']
+      : ['#e8643c','#ff8050','#ff3010','#ff5030','#d4c84a'];
+    burstParticles.push({
+      x: ox, y: oy, px: ox, py: oy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - (isVictory ? Math.random() * 4 : 0),
+      life: 1,
+      decay: 0.010 + Math.random() * 0.020,
+      size: 1.5 + Math.random() * 4,
+      colour: colours[Math.floor(Math.random() * colours.length)],
+      gravity: isVictory ? 0.05 : 0.13,
+      trail: isVictory
+    });
+  }
+  // expanding ring flashes
+  const rings = isVictory ? 3 : 2;
+  for (let i = 0; i < rings; i++) {
+    burstParticles.push({
+      ring: true, x: ox, y: oy, r: 0,
+      maxR: (isVictory ? 180 : 130) + i * 70,
+      life: 1, decay: 0.035 + i * 0.015,
+      colour: isVictory ? '#3dd6c4' : '#e8643c',
+      delay: i * 5
+    });
+  }
+  if (burstRaf) cancelAnimationFrame(burstRaf);
+  animateBurst();
+}
+
+function animateBurst() {
+  bctx.clearRect(0, 0, burstCanvas.width, burstCanvas.height);
+  let alive = false;
+  for (const p of burstParticles) {
+    if (p.delay > 0) { p.delay--; alive = true; continue; }
+    p.life -= p.decay;
+    if (p.life <= 0) continue;
+    alive = true;
+    bctx.globalAlpha = Math.max(0, p.life);
+    if (p.ring) {
+      p.r += (p.maxR - p.r) * 0.14;
+      bctx.strokeStyle = p.colour;
+      bctx.lineWidth = 2.5;
+      bctx.beginPath(); bctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); bctx.stroke();
+    } else {
+      const px = p.x, py = p.y;
+      p.x += p.vx; p.y += p.vy;
+      p.vy += p.gravity; p.vx *= 0.98;
+      if (p.trail) {
+        bctx.strokeStyle = p.colour;
+        bctx.lineWidth = p.size * 0.5;
+        bctx.beginPath(); bctx.moveTo(px, py); bctx.lineTo(p.x, p.y); bctx.stroke();
+      }
+      bctx.fillStyle = p.colour;
+      bctx.beginPath(); bctx.arc(p.x, p.y, Math.max(0.5, p.size * p.life), 0, Math.PI * 2); bctx.fill();
+    }
+  }
+  bctx.globalAlpha = 1;
+  if (alive) burstRaf = requestAnimationFrame(animateBurst);
+  else bctx.clearRect(0, 0, burstCanvas.width, burstCanvas.height);
+}
+
+function clearBurst() {
+  if (burstRaf) { cancelAnimationFrame(burstRaf); burstRaf = null; }
+  bctx.clearRect(0, 0, burstCanvas.width, burstCanvas.height);
+  burstParticles = [];
+}
+
+// ---- MSG OVERLAY ----
+const msgEl = document.getElementById('msg');
+function showMsg(title, body, btn, cb, animClass) {
+  clearBurst();
+  msgEl.className = '';
+  msgEl.innerHTML = `<h1>${title}</h1><p>${body}</p>`;
+  const b = document.createElement('button');
+  b.textContent = btn;
+  b.onclick = () => { clearBurst(); cb(); };
+  msgEl.appendChild(b);
+  requestAnimationFrame(() => { msgEl.classList.add('visible', animClass || ''); });
+}
+function hideMsg() {
+  msgEl.className = 'hidden';
+  clearBurst();
+}
+
+function gameOver() {
+  state = 'over';
+  stopDitty();
+  spawnBurst('death');
+  setTimeout(() => showMsg(
+    'PROCESS TERMINATED',
+    'The garbage collectors reclaimed you. The sector resets.',
+    'REINITIALIZE', startGame, 'anim-death'
+  ), 280);
+}
+
+function victory() {
+  state = 'won';
+  stopDitty();
+  spawnBurst('victory');
+  setTimeout(() => showMsg(
+    'DEFRAG COMPLETE',
+    'Every fragment recovered. The mainframe goes quiet — for now.',
+    'RUN AGAIN', startGame, 'anim-victory'
+  ), 200);
+}
+
+document.getElementById('startBtn').onclick = () => { resumeAudio(); startGame(); };
+
+// ---- LEVEL IMPORT ----
+// Accepts either the editor's full export (array of arrays of strings)
+// or a single level (array of strings), and hot-swaps LEVELS for the session
+document.getElementById('importBtn').onclick = () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const status = document.getElementById('importStatus');
+      try {
+        const data = JSON.parse(ev.target.result);
+        let maps = null;
+
+        // defragExportAll() format: array of map arrays
+        if (Array.isArray(data) && Array.isArray(data[0]) && typeof data[0][0] === 'string') {
+          maps = data;
+        }
+        // editor saveLevel format: array of {name, map} objects
+        else if (Array.isArray(data) && data[0] && data[0].map) {
+          maps = data.map(l => l.map);
+        }
+        // single level export: {name, map}
+        else if (data.map && Array.isArray(data.map)) {
+          maps = [data.map];
+        }
+
+        if (!maps || maps.length === 0) throw new Error('No levels found in file');
+
+        // validate each map is 16 rows × 28 cols
+        maps.forEach((m, i) => {
+          if (m.length !== 16) throw new Error(`Level ${i+1}: expected 16 rows, got ${m.length}`);
+          m.forEach((r, y) => { if (r.length !== 28) throw new Error(`Level ${i+1} row ${y}: expected 28 cols`); });
+        });
+
+        // hot-swap into LEVELS
+        LEVELS.length = 0;
+        maps.forEach(m => LEVELS.push(m));
+        level = 0;
+
+        status.style.color = '#3dd6c4';
+        status.textContent = `✓ ${maps.length} sector${maps.length !== 1 ? 's' : ''} loaded — ready`;
+      } catch(err) {
+        status.style.color = '#e8643c';
+        status.textContent = '✕ ' + err.message;
+      }
+    };
+    reader.readAsText(f);
+  };
+  input.click();
+};
+
+// ---- INIT ----
+parseLevel(LEVELS[0]);
+state = 'menu';
+loop();
+</script>
+</body>
+</html>
